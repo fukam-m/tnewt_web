@@ -2,6 +2,18 @@ import { NextResponse } from "next/server";
 import { supabase } from '@/lib/supabase-admin';  // サーバーサイド用クライアントをインポート
 import crypto from 'crypto';
 
+type BookingResponse = {
+  data: { status: string; id: string } | null;
+  error: any;
+};
+
+type PostgrestError = {
+  message: string;
+  details: string;
+  hint: string;
+  code: string;
+};
+
 // Webhookの署名を検証する関数
 function verifyWebhookSignature(payload: string, signature: string) {
   const secret = process.env.KOMOJU_WEBHOOK_SECRET || '';
@@ -23,15 +35,29 @@ function verifyWebhookSignature(payload: string, signature: string) {
   return signature === calculatedSignature;
 }
 
+async function fetchWithRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const result = await fn();
+      return result;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw new Error('Retry failed');
+}
+
 export async function POST(request: Request) {
   try {
     const rawBody = await request.text();
     const signature = request.headers.get('X-Komoju-Signature');
+    const data = JSON.parse(rawBody);
 
-    console.log('Webhook Request:', {
-      hasSignature: !!signature,
-      headers: Object.fromEntries(request.headers.entries()),
-      bodyPreview: rawBody.substring(0, 100) + '...'
+    console.log('Webhook received:', {
+      type: data.type,
+      bookingId: data.data?.metadata?.booking_id,
+      timestamp: new Date().toISOString()
     });
 
     // 開発環境でのみ署名検証をスキップ
@@ -42,7 +68,6 @@ export async function POST(request: Request) {
       }
     }
 
-    const data = JSON.parse(rawBody);
     console.log('Webhook Data:', {
       type: data.type,
       payment_id: data.data?.id,
@@ -74,57 +99,60 @@ export async function POST(request: Request) {
         );
       }
 
-      // 更新前の予約情報を確認
-      const { data: currentBooking } = await supabase
-        .from('customer_info_data')
-        .select('status, id')
-        .eq('id', bookingId)
-        .single();
-
-      console.log('Current booking status:', {
-        bookingId,
-        currentStatus: currentBooking?.status
-      });
-
-      // IDに基づいて予約情報を更新
+      // 支払い情報の更新を一意に保つ
       try {
-        const { data: updatedData, error: updateError } = await supabase
-          .from('customer_info_data')
-          .update({ status: 'paid' })
-          .eq('id', bookingId)
-          .eq('status', 'pending')
-          .select()
-          .single();
+        // 現在の状態を確認（リトライロジックを適用）
+        const { data: currentBooking, error: selectError } = await fetchWithRetry<BookingResponse>(async () => {
+          const result = await supabase
+            .from('customer_info_data')
+            .select('status, id')
+            .eq('id', bookingId)
+            .single();
 
-        if (updateError) {
-          console.error('Failed to update payment status:', {
-            error: updateError,
-            bookingId,
-            currentStatus: currentBooking?.status,
-            errorDetails: {
-              message: updateError.message,
-              details: updateError.details,
-              hint: updateError.hint,
-              code: updateError.code
-            }
-          });
-          throw new Error(`Failed to update payment status: ${updateError.message}`);
-        }
+          if (result.error) {
+            console.warn('Retrying due to error:', result.error);
+            throw result.error;
+          }
 
-        console.log('Successfully updated payment status:', {
-          bookingId,
-          oldStatus: currentBooking?.status,
-          newStatus: updatedData.status
+          return result;
         });
 
-        return NextResponse.json({ success: true });
+        if (!currentBooking) {
+          console.error('Booking not found:', { bookingId });
+          return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+        }
 
+        // 既に支払い済みの場合は重複処理を防ぐ
+        if (currentBooking.status === 'paid') {
+          return NextResponse.json({ success: true, message: 'Payment already processed' });
+        }
+
+        // pendingステータスの予約のみ更新
+        const { error: updateError } = await fetchWithRetry(async () => {
+          const result = await supabase
+            .from('customer_info_data')
+            .update({ status: 'paid' })
+            .eq('id', bookingId)
+            .eq('status', 'pending')
+            .single();
+
+          if (result.error) {
+            console.warn('Retrying update due to error:', result.error);
+            throw result.error;
+          }
+
+          return result;
+        });
+
+        if (updateError) {
+          console.error('Update failed:', { error: updateError, bookingId });
+          throw new Error(`Failed to update payment status: ${(updateError as PostgrestError).message}`);
+        }
+
+        return NextResponse.json({ success: true });
       } catch (error) {
         console.error('Payment status update error:', error);
-        return NextResponse.json(
-          { error: 'Failed to update payment status' },
-          { status: 500 }
-        );
+        return NextResponse.json({ error: 'Failed to update payment status' }, { status: 500 });
       }
     } else {
       console.log('Non-payment completion webhook received:', data.type);

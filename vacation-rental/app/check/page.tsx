@@ -87,19 +87,19 @@ export default function CheckPage() {
       // 支払い前に再度状態チェック
       const { data: statusCheck, error: statusError } = await supabaseClient
         .from('customer_info_data')
-        .select('id, status')  // idも取得
+        .select('id, status')
         .eq('email', guestInfo.email)
         .eq('amount', amount)
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
 
-      console.log('Payment status check:', {
-        email: guestInfo.email,
-        amount: amount,
-        result: statusCheck,
-        error: statusError
-      });
+      if (statusCheck?.status === 'paid') {
+        // 支払い済みの場合は支払い完了ページに遷移
+        localStorage.setItem('currentBookingId', statusCheck.id);
+        router.push('/payment-completed');
+        return;
+      }
 
       // エラーハンドリング
       if (statusError) {
@@ -116,11 +116,6 @@ export default function CheckPage() {
         throw new Error('予約情報が見つかりません');
       }
 
-      if (statusCheck.status === 'paid') {
-        router.push('/payment-completed');
-        return;
-      }
-
       if (statusCheck.status === 'processing') {
         alert('支払い処理中です。しばらく待ってから再度お試しください。');
         router.push('/');
@@ -134,73 +129,41 @@ export default function CheckPage() {
         amount: amount
       });
 
+      const paymentData = {
+        name: `${guestInfo.lastName} ${guestInfo.firstName}`,
+        email: guestInfo.email,
+        phone: guestInfo.phone,
+        amount,
+        currency: "JPY",
+        external_order_num: Date.now().toString(),
+        booking_id: statusCheck.id
+      };
+
       const response = await fetch('/api/create-payment', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: `${guestInfo.lastName} ${guestInfo.firstName}`,
-          email: guestInfo.email,
-          phone: guestInfo.phone,
-          amount,
-          currency: "JPY",
-          external_order_num: Date.now().toString(),
-          booking_id: statusCheck.id
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(paymentData)
       });
 
-      let result;
-      try {
-        result = await response.json();
-      } catch (parseError) {
-        console.error('Response parse error:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: parseError
-        });
-        throw new Error('レスポンスの解析に失敗しました');
-      }
-
-      console.log('Payment API Response:', {
-        ok: response.ok,
-        status: response.status,
-        result
-      });
+      const result = await response.json();
 
       if (!response.ok) {
-        console.error('Payment API Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: result,
-          errorMessage: result.error,
-          errorDetails: result.details
-        });
-        throw new Error(result.error || '支払い処理に失敗しました');
+        throw new Error(result.error || '支払い処理中にエラーが発生しました');
       }
 
       if (!result.session_url) {
-        console.error('Missing session URL:', result);
-        throw new Error('支払いURLの取得に失敗しました');
+        throw new Error('支払いセッションの作成に失敗しました');
       }
 
+      // 支払いページに遷移する前にbooking_idを保存
+      localStorage.setItem('currentBookingId', statusCheck.id);
       window.location.href = result.session_url;
     } catch (error) {
-      const errorDetails = {
-        error: error instanceof Error ? {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        } : error,
-        context: {
-          guestInfo,
-          amount
-        },
-        timestamp: new Date().toISOString()
-      };
-
-      console.error("Payment Error:", errorDetails);
-      alert(error instanceof Error ? error.message : "支払い処理中にエラーが発生しました");
+      console.error("Payment Error:", { 
+        message: error instanceof Error ? error.message : '不明なエラー',
+        details: error 
+      });
+      alert('支払い処理中にエラーが発生しました。時間をおいて再度お試しください。');
     }
   };
 
