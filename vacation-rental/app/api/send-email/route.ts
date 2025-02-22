@@ -17,10 +17,24 @@ export async function POST(request: Request) {
     }
 
     const data = await request.json();
-    const { lastName, firstName, email, phone, amount } = data;
+    const { last_name: lastName, first_name: firstName, email, phone, amount } = data;
 
-    // 支払いページのURL生成
-    const paymentUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/check`;
+    // デバッグ用のログ追加
+    console.log('Email data received:', {
+      lastName,
+      firstName,
+      email,
+      phone,
+      amount
+    });
+
+    // 支払いページのURL生成を修正
+    const paymentUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/check?` + new URLSearchParams({
+      name: `${lastName} ${firstName}`,
+      email: email,
+      phone: phone,
+      amount: amount.toString()
+    }).toString();
 
     // メールの内容を作成
     const mailOptions = {

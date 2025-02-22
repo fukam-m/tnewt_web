@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/lib/supabase";
+import { supabaseClient } from '@/lib/supabase';  // フロントエンド用クライアント
 import type { GuestInfo } from "@/types/database.types";
 
 export default function ConfirmPage() {
@@ -24,27 +24,44 @@ export default function ConfirmPage() {
   });
 
   useEffect(() => {
-    const savedGuestInfo = localStorage.getItem("guestInfo");
-    const savedAmount = localStorage.getItem("bookingAmount"); // 予約金額を取得
+    // ローカルストレージのデータをログ
+    console.log('LocalStorage Data:', {
+      guestInfo: localStorage.getItem("guestInfo"),
+      bookingDetails: localStorage.getItem("bookingDetails"),
+      bookingAmount: localStorage.getItem("bookingAmount")
+    });
 
-    if (savedGuestInfo) {
+    const savedGuestInfo = localStorage.getItem("guestInfo");
+    const savedAmount = localStorage.getItem("bookingAmount");
+    const savedBookingDetails = localStorage.getItem("bookingDetails");
+
+    if (savedGuestInfo && savedBookingDetails) {
       const parsedInfo = JSON.parse(savedGuestInfo);
+      const parsedBooking = JSON.parse(savedBookingDetails);
       const amount = savedAmount ? parseInt(savedAmount, 10) : 0;
+
+      // パース後のデータをログ
+      console.log('Parsed Data:', {
+        guestInfo: parsedInfo,
+        bookingDetails: parsedBooking,
+        amount: amount
+      });
 
       setGuestInfo({
         last_name: parsedInfo.last_name || "",
         first_name: parsedInfo.first_name || "",
         email: parsedInfo.email || "",
         phone: parsedInfo.phone || "",
-        amount: amount, // 予約金額を設定
+        amount: amount,
         status: "pending",
-        check_in_date: new Date().toISOString(),
-        check_out_date: new Date().toISOString(),
+        check_in_date: parsedBooking.checkIn,
+        check_out_date: parsedBooking.checkOut,
         created_at: new Date().toISOString(),
         id: "",
         address: parsedInfo.address || ""
       });
     } else {
+      console.log('Missing required data, redirecting to guest-info');
       router.push("/guest-info");
     }
   }, [router]);
@@ -84,56 +101,77 @@ export default function ConfirmPage() {
 
   const handleConfirm = async () => {
     try {
-      // データの検証
-      validateGuestInfo(guestInfo);
+      console.log('Pre-validation state:', { guestInfo, localStorage });
+      
+      // バリデーション
+      if (!guestInfo || !localStorage) {
+        throw new Error('必要な情報が不足しています');
+      }
 
-      // 日付の設定（チェックイン日を今日、チェックアウト日を明日に設定）
-      const today = new Date();
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      const formattedData = {
+        last_name: guestInfo.last_name,
+        first_name: guestInfo.first_name,
+        email: guestInfo.email,
+        phone: guestInfo.phone,
+        amount: guestInfo.amount || 0,
+        status: 'pending',
+        check_in_date: guestInfo.check_in_date,
+        check_out_date: guestInfo.check_out_date,
+        address: guestInfo.address
+      };
 
-      console.log("Sending data to Supabase:", guestInfo);
+      console.log('Formatted booking data:', formattedData);
 
-      // Supabaseにデータを保存
-      const { data, error } = await supabase
+      // フロントエンド用クライアントを使用
+      const { data, error } = await supabaseClient
         .from('customer_info_data')
-        .insert([
-          {
-            last_name: guestInfo.last_name,
-            first_name: guestInfo.first_name,
-            email: guestInfo.email,
-            phone: guestInfo.phone,
-            amount: guestInfo.amount || 0,
-            status: 'pending',
-            check_in_date: today.toISOString(),
-            check_out_date: tomorrow.toISOString()
-          }
-        ])
+        .insert([formattedData])
         .select()
         .single();
 
       if (error) {
-        console.error("Supabase Error:", error);
+        console.error('Supabase insertion error:', error);
         throw new Error(`データの保存に失敗しました: ${error.message}`);
       }
 
-      // メール送信処理
+      console.log('Successfully saved booking:', data);
+
+      // メール送信前のデータ確認
+      console.log('Sending email with data:', formattedData);
+
       const emailResponse = await fetch("/api/send-email", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(guestInfo),
+        body: JSON.stringify({
+          last_name: guestInfo.last_name,
+          first_name: guestInfo.first_name,
+          email: guestInfo.email,
+          phone: guestInfo.phone,
+          amount: guestInfo.amount
+        }),
       });
 
       if (!emailResponse.ok) {
+        console.error('Email sending failed:', await emailResponse.text());
         throw new Error("メール送信に失敗しました");
       }
 
+      // クリーンアップ前の最終確認
+      console.log('Cleaning up localStorage...');
+      localStorage.removeItem("guestInfo");
+      localStorage.removeItem("bookingDetails");
+      localStorage.removeItem("bookingAmount");
+
       router.push("/email-sent");
     } catch (error) {
-      console.error("Error details:", error);
-      alert(error instanceof Error ? error.message : "処理に失敗しました。もう一度お試しください。");
+      console.error("Detailed error:", {
+        error,
+        message: error instanceof Error ? error.message : "Unknown error",
+        state: { guestInfo, localStorage }
+      });
+      throw error;
     }
   };
 
@@ -146,6 +184,30 @@ export default function ConfirmPage() {
         <CardContent>
           <div className="space-y-6">
             <div className="space-y-4">
+              <h2 className="text-lg font-semibold">予約情報 / Booking Information</h2>
+              <div className="grid gap-2">
+                <div>
+                  <p className="text-sm text-gray-500">チェックイン / Check-in</p>
+                  <p className="font-medium">
+                    {new Date(guestInfo.check_in_date).toLocaleDateString('ja-JP', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">チェックアウト / Check-out</p>
+                  <p className="font-medium">
+                    {new Date(guestInfo.check_out_date).toLocaleDateString('ja-JP', {
+                      year: 'numeric',
+                      month: '2-digit',
+                      day: '2-digit'
+                    })}
+                  </p>
+                </div>
+              </div>
+              
               <h2 className="text-lg font-semibold">お客様情報 / Guest Information</h2>
               <div className="grid gap-2">
                 <div>

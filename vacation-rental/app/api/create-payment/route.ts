@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { Buffer } from "buffer";
 import { headers } from "next/headers";
+import { supabase } from "@/lib/supabase-admin";
+import https from 'https';
+import axios from 'axios';
 
 const KOMOJU_API_KEY = process.env.KOMOJU_API_KEY;
 const KOMOJU_MERCHANT_UUID = process.env.KOMOJU_MERCHANT_UUID;
@@ -12,7 +15,84 @@ export async function POST(request: Request) {
     console.log("Request Data:", data);
 
     if (!KOMOJU_API_KEY || !KOMOJU_MERCHANT_UUID) {
-      throw new Error("環境変数 (KOMOJU_API_KEY, KOMOJU_MERCHANT_UUID) が正しく設定されていません");
+      throw new Error("環境変数が正しく設定されていません");
+    }
+
+    // 環境変数の確認を追加
+    console.log('KOMOJU Config:', {
+      apiUrl: KOMOJU_ENDPOINT,
+      hasMerchantUuid: !!KOMOJU_MERCHANT_UUID,
+      hasApiKey: !!KOMOJU_API_KEY
+    });
+
+    // KOMOJU設定のより詳細なログ
+    console.log('KOMOJU Configuration:', {
+      endpoint: KOMOJU_ENDPOINT,
+      environment: KOMOJU_ENDPOINT.includes('sandbox') ? 'test' : 'production',
+      merchantUuid: {
+        exists: !!KOMOJU_MERCHANT_UUID,
+        length: KOMOJU_MERCHANT_UUID?.length,
+        preview: KOMOJU_MERCHANT_UUID?.substring(0, 4) + '...'
+      },
+      apiKey: {
+        exists: !!KOMOJU_API_KEY,
+        length: KOMOJU_API_KEY?.length,
+        preview: KOMOJU_API_KEY?.substring(0, 4) + '...'
+      }
+    });
+
+    // 支払い状態をチェック
+    const { data: bookingData, error: bookingError } = await supabase
+      .from('customer_info_data')
+      .select('status, created_at, id')
+      .eq('id', data.booking_id)
+      .single();
+
+    // より詳細なログを追加
+    console.log('Booking check details:', {
+      input: { booking_id: data.booking_id },
+      query: {
+        table: 'customer_info_data',
+        conditions: { id: data.booking_id }
+      },
+      result: {
+        found: !!bookingData,
+        data: bookingData,
+        error: bookingError
+      },
+      timestamp: new Date().toISOString()
+    });
+
+    if (bookingError) {
+      console.error('Booking check error:', {
+        error: bookingError,
+        details: {
+          message: bookingError.message,
+          details: bookingError.details,
+          hint: bookingError.hint,
+          code: bookingError.code
+        },
+        query: { id: data.booking_id }
+      });
+
+      return NextResponse.json(
+        { error: "予約情報の確認中にエラーが発生しました", details: bookingError.message },
+        { status: 400 }
+      );
+    }
+
+    if (!bookingData) {
+      return NextResponse.json(
+        { error: "予約情報が見つかりません" },
+        { status: 404 }
+      );
+    }
+
+    if (bookingData.status === 'paid') {
+      return NextResponse.json(
+        { error: "この予約は既に支払い済みです" },
+        { status: 400 }
+      );
     }
 
     const komojuData = {
@@ -25,47 +105,90 @@ export async function POST(request: Request) {
       locale: "ja",
       default_payment_method: "credit_card",
       merchant_uuid: KOMOJU_MERCHANT_UUID,
+      metadata: {
+        booking_id: bookingData.id  // 予約IDをメタデータとして追加
+      }
     };
 
-    console.log("Sending to KOMOJU:", komojuData);
+    try {
+      // axiosインスタンスの設定
+      const instance = axios.create({
+        baseURL: KOMOJU_ENDPOINT,
+        timeout: 30000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${Buffer.from(KOMOJU_API_KEY + ":").toString("base64")}`
+        },
+        httpsAgent: new https.Agent({
+          rejectUnauthorized: true
+        })
+      });
 
-    const response = await fetch(KOMOJU_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Basic ${Buffer.from(KOMOJU_API_KEY + ":").toString("base64")}`,
-      },
-      body: JSON.stringify(komojuData),
-      signal: AbortSignal.timeout(30000) // 30秒
-    });
+      console.log('KOMOJU API Request:', {
+        url: KOMOJU_ENDPOINT,
+        method: 'POST',
+        data: komojuData
+      });
 
-    const responseText = await response.text();
-    console.log("KOMOJU Response Status:", response.status);
-    console.log("KOMOJU Response Text:", responseText);
+      try {
+        const response = await instance.post('', komojuData);
 
-    if (!response.ok) {
-      throw new Error(`KOMOJU API Error: ${responseText}`);
-    }
+        console.log('KOMOJU API Response:', {
+          status: response.status,
+          statusText: response.statusText,
+          data: response.data
+        });
 
-    const paymentSession = JSON.parse(responseText);
-    console.log("Payment Session Created:", paymentSession);
+        const paymentSession = response.data;
+        
+        // 支払いセッション作成後、ステータスを更新
+        await supabase
+          .from('customer_info_data')
+          .update({ status: 'processing' })
+          .eq('id', bookingData.id)  // booking_idを使用
+          .single();
 
-    // `session_url`を返却
-    return NextResponse.json({ session_url: paymentSession.session_url });
-  } catch (error: unknown) {
-    console.error("Payment initialization error:", error);
-    
-    let errorMessage = "支払い処理の初期化に失敗しました。";
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        errorMessage = '支払い処理がタイムアウトしました。しばらく待ってから再度お試しください。';
-      } else if (error.message.includes('KOMOJU API Error')) {
-        errorMessage = error.message;
+        return NextResponse.json({ session_url: paymentSession.session_url });
+
+      } catch (axiosError) {
+        if (axios.isAxiosError(axiosError)) {
+          console.error('KOMOJU API Error:', {
+            status: axiosError.response?.status,
+            statusText: axiosError.response?.statusText,
+            data: axiosError.response?.data,
+            message: axiosError.message
+          });
+
+          return NextResponse.json(
+            { 
+              error: "KOMOJU APIとの通信に失敗しました",
+              details: axiosError.response?.data || axiosError.message
+            },
+            { status: axiosError.response?.status || 502 }
+          );
+        }
+
+        throw axiosError;  // 予期せぬエラーの場合は上位のエラーハンドラーに委ねる
       }
-    }
+    } catch (error: unknown) {
+      console.error("KOMOJU API Error:", error);
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        return NextResponse.json(
+          { error: "決済サービスとの通信がタイムアウトしました。しばらく待ってから再度お試しください。" },
+          { status: 504 }
+        );
+      }
 
+      return NextResponse.json(
+        { error: "決済サービスとの通信に失敗しました。しばらく待ってから再度お試しください。" },
+        { status: 502 }
+      );
+    }
+  } catch (error) {
+    console.error("Payment initialization error:", error);
     return NextResponse.json(
-      { error: errorMessage },
+      { error: "予期せぬエラーが発生しました。しばらく待ってから再度お試しください。" },
       { status: 500 }
     );
   }

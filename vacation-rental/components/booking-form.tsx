@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { BookingDetails } from "@/types/booking"
 import { DateRange } from "react-day-picker"
 import { RefreshCw } from "lucide-react"
+import { supabaseClient } from "@/lib/supabase"
 
 const OPTIONS = [
   { id: "breakfast", label: "朝食付き (+2000円)" },
@@ -24,8 +25,8 @@ export function BookingForm() {
   const router = useRouter()
   const [dateRange, setDateRange] = useState<DateRange | undefined>()
   const [booking, setBooking] = useState<BookingDetails>({
-    checkIn: new Date(),
-    checkOut: new Date(),
+    checkIn: new Date(0),
+    checkOut: new Date(0),
     guests: 1,
     options: [],
     couponCode: ""
@@ -33,6 +34,7 @@ export function BookingForm() {
   const [isCouponApplied, setIsCouponApplied] = useState(false)
   const [couponMessage, setCouponMessage] = useState<{ text: string; isSuccess: boolean } | null>(null)
   const [totalPrice, setTotalPrice] = useState(1000);
+  const [error, setError] = useState<string | null>(null);
 
   const calculateNights = (checkIn: Date, checkOut: Date) => {
     const diffTime = checkOut.getTime() - checkIn.getTime()
@@ -75,13 +77,35 @@ export function BookingForm() {
     localStorage.setItem("bookingAmount", JSON.stringify(newTotal));
   }, [booking, isCouponApplied]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    router.push("/guest-info")
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (!dateRange?.from || !dateRange?.to) {
+        setError("チェックイン・チェックアウト日を選択してください。");
+        return;
+      }
+
+      localStorage.setItem("bookingDetails", JSON.stringify({
+        checkIn: dateRange.from,
+        checkOut: dateRange.to,
+        guests: booking.guests,
+        options: booking.options,
+        couponCode: booking.couponCode
+      }));
+
+      router.push("/guest-info");
+    } catch (err) {
+      setError("エラーが発生しました。もう一度お試しください。");
+    }
+  };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
+      {error && (
+        <div className="p-4 mb-4 text-red-700 bg-red-100 rounded-lg">
+          {error}
+        </div>
+      )}
       <div className="grid gap-6 md:grid-cols-2">
         <div className="space-y-4">
           <Label>チェックイン/チェックアウト日</Label>
@@ -98,8 +122,8 @@ export function BookingForm() {
                       setDateRange(undefined)
                       setBooking(prev => ({
                         ...prev,
-                        checkIn: new Date(),
-                        checkOut: new Date()
+                        checkIn: new Date(0),
+                        checkOut: new Date(0)
                       }))
                       setIsCouponApplied(false)
                       setCouponMessage(null)
@@ -141,22 +165,25 @@ export function BookingForm() {
                       selected={dateRange}
                       onSelect={(range) => {
                         if (range?.to && range.from && range.to < range.from) {
-                          return
+                          return;
                         }
-                        setDateRange(range)
-                        if (range) {
+                        setDateRange(range);
+                        if (range?.from instanceof Date && range?.to instanceof Date) {
+                          const checkIn = new Date(range.from);
+                          const checkOut = new Date(range.to);
+                          
                           setBooking(prev => ({
                             ...prev,
-                            checkIn: range.from ?? prev.checkIn,
-                            checkOut: range.to ?? prev.checkOut
-                          }))
+                            checkIn,
+                            checkOut
+                          }));
                         }
                       }}
                       numberOfMonths={2}
                       disabled={(date) => {
-                        const today = new Date()
-                        today.setHours(0, 0, 0, 0)
-                        return date < today
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        return date < today;
                       }}
                     />
                   </PopoverContent>
