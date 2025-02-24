@@ -1,7 +1,9 @@
+import { IconType } from 'react-icons'
+
 export interface Amenity {
-  name: string
-  description: string
-  icon: React.ComponentType
+  icon: IconType;
+  name: string;
+  description: string;
 }
 
 export interface BookingDetails {

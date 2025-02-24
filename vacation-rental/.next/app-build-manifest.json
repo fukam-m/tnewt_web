@@ -16,11 +16,6 @@
       "static/chunks/main-app.js",
       "static/chunks/app/guest-info/page.js"
     ],
-    "/api/payment-webhook/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/payment-webhook/route.js"
-    ],
     "/confirm/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -45,6 +40,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/create-payment/route.js"
+    ],
+    "/api/payment-webhook/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/payment-webhook/route.js"
     ]
   }
 }

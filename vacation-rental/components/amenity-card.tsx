@@ -1,8 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { Amenity } from "@/types/booking"
+import { IconType } from 'react-icons'
 
 interface AmenityCardProps {
-  amenity: Amenity
+  amenity: {
+    icon: IconType;
+    name: string;
+    description: string;
+  }
 }
 
 export function AmenityCard({ amenity }: AmenityCardProps) {
