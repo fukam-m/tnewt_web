@@ -1,8 +1,10 @@
 {
+  "/api/send-email/route": "app/api/send-email/route.js",
+  "/api/create-payment/route": "app/api/create-payment/route.js",
   "/api/payment-webhook/route": "app/api/payment-webhook/route.js",
   "/page": "app/page.js",
+  "/guest-info/page": "app/guest-info/page.js",
   "/confirm/page": "app/confirm/page.js",
   "/email-sent/page": "app/email-sent/page.js",
-  "/check/page": "app/check/page.js",
-  "/guest-info/page": "app/guest-info/page.js"
+  "/check/page": "app/check/page.js"
 }

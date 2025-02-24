@@ -108,36 +108,10 @@ export default function ConfirmPage() {
         throw new Error('必要な情報が不足しています');
       }
 
-      const formattedData = {
-        last_name: guestInfo.last_name,
-        first_name: guestInfo.first_name,
-        email: guestInfo.email,
-        phone: guestInfo.phone,
-        amount: guestInfo.amount || 0,
-        status: 'pending',
-        check_in_date: guestInfo.check_in_date,
-        check_out_date: guestInfo.check_out_date,
-        address: guestInfo.address
-      };
-
-      console.log('Formatted booking data:', formattedData);
-
-      // フロントエンド用クライアントを使用
-      const { data, error } = await supabaseClient
-        .from('customer_info_data')
-        .insert([formattedData])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Supabase insertion error:', error);
-        throw new Error(`データの保存に失敗しました: ${error.message}`);
-      }
-
-      console.log('Successfully saved booking:', data);
+      // データベースへの登録は削除（guest-info/page.tsxで既に行っているため）
 
       // メール送信前のデータ確認
-      console.log('Sending email with data:', formattedData);
+      console.log('Sending email with data:', guestInfo);
 
       const emailResponse = await fetch("/api/send-email", {
         method: "POST",
@@ -158,19 +132,14 @@ export default function ConfirmPage() {
         throw new Error("メール送信に失敗しました");
       }
 
-      // クリーンアップ前の最終確認
-      console.log('Cleaning up localStorage...');
+      // クリーンアップ
       localStorage.removeItem("guestInfo");
       localStorage.removeItem("bookingDetails");
       localStorage.removeItem("bookingAmount");
 
       router.push("/email-sent");
     } catch (error) {
-      console.error("Detailed error:", {
-        error,
-        message: error instanceof Error ? error.message : "Unknown error",
-        state: { guestInfo, localStorage }
-      });
+      console.error("Detailed error:", error);
       throw error;
     }
   };

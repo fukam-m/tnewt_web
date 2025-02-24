@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { supabaseClient } from "@/lib/supabase";
 
 export default function GuestInfoPage() {
   const router = useRouter();
@@ -20,16 +21,56 @@ export default function GuestInfoPage() {
     city: "",
     street: "",
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const fullAddress = `〒${guestInfo.postal_code} ${guestInfo.prefecture}${guestInfo.city}${guestInfo.street}`;
-    const saveData = {
-      ...guestInfo,
-      address: fullAddress,
-    };
-    localStorage.setItem("guestInfo", JSON.stringify(saveData));
-    router.push("/confirm");
+    setIsSubmitting(true);
+
+    try {
+      const bookingDetails = JSON.parse(localStorage.getItem("bookingDetails") || "{}");
+      const amount = JSON.parse(localStorage.getItem("bookingAmount") || "0");
+
+      // 日付を正しく処理（タイムゾーンを考慮）
+      const checkInDate = new Date(bookingDetails.checkIn);
+      const checkOutDate = new Date(bookingDetails.checkOut);
+      
+      // 日本時間に調整（+9時間）
+      const jpCheckIn = new Date(checkInDate.getTime() + (9 * 60 * 60 * 1000));
+      const jpCheckOut = new Date(checkOutDate.getTime() + (9 * 60 * 60 * 1000));
+
+      // 住所を結合
+      const fullAddress = `〒${guestInfo.postal_code} ${guestInfo.prefecture}${guestInfo.city}${guestInfo.street}`;
+
+      // 1回だけデータを挿入
+      const { data, error } = await supabaseClient
+        .from('customer_info_data')
+        .insert([
+          {
+            first_name: guestInfo.first_name,
+            last_name: guestInfo.last_name,
+            email: guestInfo.email,
+            phone: guestInfo.phone,
+            address: fullAddress,
+            amount: amount,
+            check_in_date: jpCheckIn.toISOString().split('T')[0],
+            check_out_date: jpCheckOut.toISOString().split('T')[0]
+          }
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error saving customer info:", error);
+        throw error;
+      }
+
+      localStorage.setItem("guestInfo", JSON.stringify(guestInfo));
+      router.push("/confirm");
+    } catch (error) {
+      console.error("Error saving customer info:", error);
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -117,7 +158,7 @@ export default function GuestInfoPage() {
                 />
               </div>
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
               確認画面へ / Proceed to Confirmation
             </Button>
           </form>
