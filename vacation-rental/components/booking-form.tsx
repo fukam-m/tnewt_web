@@ -14,6 +14,7 @@ import type { BookingDetails } from "@/types/booking"
 import { DateRange } from "react-day-picker"
 import { RefreshCw } from "lucide-react"
 import { supabaseClient } from "@/lib/supabase"
+import { addDays, eachDayOfInterval } from 'date-fns';
 
 const OPTIONS = [
   { id: "breakfast", label: "朝食付き (+2000円)" },
@@ -35,6 +36,7 @@ export function BookingForm() {
   const [couponMessage, setCouponMessage] = useState<{ text: string; isSuccess: boolean } | null>(null)
   const [totalPrice, setTotalPrice] = useState(1000);
   const [error, setError] = useState<string | null>(null);
+  const [disabledDates, setDisabledDates] = useState<Date[]>([]);
 
   const calculateNights = (checkIn: Date, checkOut: Date) => {
     const diffTime = checkOut.getTime() - checkIn.getTime()
@@ -98,6 +100,36 @@ export function BookingForm() {
       setError("エラーが発生しました。もう一度お試しください。");
     }
   };
+
+  // 予約済みと仮予約の日付を取得
+  useEffect(() => {
+    const fetchBookedDates = async () => {
+      const { data, error } = await supabaseClient
+        .from('customer_info_data')
+        .select('check_in_date, check_out_date')
+        .in('status', ['waiting', 'paid']);
+
+      if (error) {
+        console.error('Error fetching booked dates:', error);
+        return;
+      }
+
+      // 予約期間中の全日付を取得
+      const allBookedDates = data?.flatMap(booking => {
+        const checkIn = new Date(booking.check_in_date);
+        const checkOut = new Date(booking.check_out_date);
+        
+        return eachDayOfInterval({
+          start: checkIn,
+          end: addDays(checkOut, -1) // チェックアウト日は除外
+        });
+      }) || [];
+
+      setDisabledDates(allBookedDates);
+    };
+
+    fetchBookedDates();
+  }, []);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
@@ -183,7 +215,14 @@ export function BookingForm() {
                       disabled={(date) => {
                         const today = new Date();
                         today.setHours(0, 0, 0, 0);
-                        return date < today;
+                        
+                        // 日付を比較可能な形式に変換
+                        const dateStr = date.toISOString().split('T')[0];
+                        const isDisabled = disabledDates.some(disabledDate => 
+                          disabledDate.toISOString().split('T')[0] === dateStr
+                        );
+                        
+                        return date < today || isDisabled;
                       }}
                     />
                   </PopoverContent>

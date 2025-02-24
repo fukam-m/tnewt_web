@@ -4,5 +4,5 @@
   "/confirm/page": "app/confirm/page.js",
   "/email-sent/page": "app/email-sent/page.js",
   "/check/page": "app/check/page.js",
-  "/payment-expired/page": "app/payment-expired/page.js"
+  "/guest-info/page": "app/guest-info/page.js"
 }
