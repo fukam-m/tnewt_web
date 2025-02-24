@@ -51,3 +51,11 @@ npm install
 ```
 npm run dev
 ```
+
+
+# テスト環境用のWebhookを設定
+```
+sudo npm install -g ngrok
+ngrok authtoken your_auth_token
+ngrok http 3000
+```
