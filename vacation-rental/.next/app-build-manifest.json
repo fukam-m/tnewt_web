@@ -31,6 +31,11 @@
       "static/chunks/main-app.js",
       "static/chunks/app/email-sent/page.js"
     ],
+    "/api/payment-webhook/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/payment-webhook/route.js"
+    ],
     "/check/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -41,10 +46,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/api/create-payment/route.js"
     ],
-    "/api/payment-webhook/route": [
+    "/payment-expired/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/payment-webhook/route.js"
+      "static/chunks/app/payment-expired/page.js"
     ]
   }
 }

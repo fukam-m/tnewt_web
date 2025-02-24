@@ -78,7 +78,69 @@ export async function POST(request: Request) {
     // KOMOJUからのWebhookを検証
     // 実際の実装では適切な検証が必要です
     
-    if (data.type === 'payment.captured') {
+    if (data.type === 'payment.authorized') {
+      console.log('Payment authorized webhook received:', {
+        metadata: data.data?.metadata,
+        timestamp: new Date().toISOString()
+      });
+
+      const bookingId = data.data.metadata?.booking_id;
+      if (!bookingId) {
+        return NextResponse.json({ error: 'Booking ID not found' }, { status: 400 });
+      }
+
+      // 支払い認証済みステータスに更新
+      try {
+        const { error: updateError } = await fetchWithRetry(async () => {
+          const result = await supabase
+            .from('customer_info_data')
+            .update({ status: 'waiting' })
+            .eq('id', bookingId)
+            .eq('status', 'pending')
+            .single();
+
+          if (result.error) throw result.error;
+          return result;
+        });
+
+        if (updateError) throw updateError;
+        return NextResponse.json({ success: true });
+      } catch (error) {
+        console.error('Status update error:', error);
+        return NextResponse.json({ error: 'Failed to update status' }, { status: 500 });
+      }
+    } else if (data.type === 'payment.expired') {
+      console.log('Payment expired webhook received:', {
+        metadata: data.data?.metadata,
+        timestamp: new Date().toISOString()
+      });
+
+      const bookingId = data.data.metadata?.booking_id;
+      if (!bookingId) {
+        return NextResponse.json({ error: 'Booking ID not found' }, { status: 400 });
+      }
+
+      // 支払い期限切れでキャンセル状態に更新
+      try {
+        const { error: updateError } = await fetchWithRetry(async () => {
+          const result = await supabase
+            .from('customer_info_data')
+            .update({ status: 'cancelled' })
+            .eq('id', bookingId)
+            .eq('status', 'waiting')
+            .single();
+
+          if (result.error) throw result.error;
+          return result;
+        });
+
+        if (updateError) throw updateError;
+        return NextResponse.json({ success: true });
+      } catch (error) {
+        console.error('Status update error:', error);
+        return NextResponse.json({ error: 'Failed to update status' }, { status: 500 });
+      }
+    } else if (data.type === 'payment.captured') {
       console.log('Payment captured webhook received:', {
         metadata: data.data?.metadata,
         payment_details: {
@@ -101,58 +163,23 @@ export async function POST(request: Request) {
 
       // 支払い情報の更新を一意に保つ
       try {
-        // 現在の状態を確認（リトライロジックを適用）
-        const { data: currentBooking, error: selectError } = await fetchWithRetry<BookingResponse>(async () => {
-          const result = await supabase
-            .from('customer_info_data')
-            .select('status, id')
-            .eq('id', bookingId)
-            .single();
-
-          if (result.error) {
-            console.warn('Retrying due to error:', result.error);
-            throw result.error;
-          }
-
-          return result;
-        });
-
-        if (!currentBooking) {
-          console.error('Booking not found:', { bookingId });
-          return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-        }
-
-        // 既に支払い済みの場合は重複処理を防ぐ
-        if (currentBooking.status === 'paid') {
-          return NextResponse.json({ success: true, message: 'Payment already processed' });
-        }
-
-        // pendingステータスの予約のみ更新
         const { error: updateError } = await fetchWithRetry(async () => {
           const result = await supabase
             .from('customer_info_data')
             .update({ status: 'paid' })
             .eq('id', bookingId)
-            .eq('status', 'pending')
+            .in('status', ['pending', 'waiting'])
             .single();
 
-          if (result.error) {
-            console.warn('Retrying update due to error:', result.error);
-            throw result.error;
-          }
-
+          if (result.error) throw result.error;
           return result;
         });
 
-        if (updateError) {
-          console.error('Update failed:', { error: updateError, bookingId });
-          throw new Error(`Failed to update payment status: ${(updateError as PostgrestError).message}`);
-        }
-
+        if (updateError) throw updateError;
         return NextResponse.json({ success: true });
       } catch (error) {
-        console.error('Payment status update error:', error);
-        return NextResponse.json({ error: 'Failed to update payment status' }, { status: 500 });
+        console.error('Status update error:', error);
+        return NextResponse.json({ error: 'Failed to update status' }, { status: 500 });
       }
     } else {
       console.log('Non-payment completion webhook received:', data.type);

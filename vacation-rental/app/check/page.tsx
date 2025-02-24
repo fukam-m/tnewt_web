@@ -37,50 +37,41 @@ export default function CheckPage() {
 
   useEffect(() => {
     const checkPaymentStatus = async () => {
+      if (!guestInfo.email || !amount) return;  // 必要な情報がない場合は処理しない
+
       try {
-        const email = searchParams.get("email");
-        const amount = parseInt(searchParams.get("amount") || "0", 10);
-
-        console.log('Checking payment status for:', { email, amount });
-
-        const { data, error } = await supabaseClient
+        const { data: statusCheck, error } = await supabaseClient
           .from('customer_info_data')
-          .select('id, status')
-          .eq('email', email)
+          .select('status')
+          .eq('email', guestInfo.email)
           .eq('amount', amount)
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
 
         if (error) {
-          console.error('Payment status check error:', {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code
-          });
+          console.error('Payment status check error:', error);
           return;
         }
 
-        if (data?.status === 'paid') {
-          router.push('/payment-completed');
+        // キャンセル状態の場合は期限切れページにリダイレクト
+        if (statusCheck?.status === 'cancelled') {
+          router.replace('/payment-expired');  // replaceを使用して履歴を残さない
           return;
         }
 
-        if (data?.status === 'processing') {
-          alert('支払い処理中です。しばらく待ってから再度お試しください。');
-          router.push('/');
+        // 支払い済みの場合
+        if (statusCheck?.status === 'paid') {
+          router.replace('/payment-completed');
           return;
         }
       } catch (error) {
-        console.error('Status check error:', error instanceof Error ? error.message : error);
+        console.error('Payment status check error:', error);
       }
     };
 
-    if (searchParams.get("email") && searchParams.get("amount")) {
-      checkPaymentStatus();
-    }
-  }, [searchParams, router]);
+    checkPaymentStatus();
+  }, [guestInfo.email, amount, router]);
 
   const handlePayment = async () => {
     try {
@@ -94,14 +85,12 @@ export default function CheckPage() {
         .limit(1)
         .single();
 
-      if (statusCheck?.status === 'paid') {
-        // 支払い済みの場合は支払い完了ページに遷移
-        localStorage.setItem('currentBookingId', statusCheck.id);
-        router.push('/payment-completed');
+      // キャンセル状態の場合は支払い不可
+      if (statusCheck?.status === 'cancelled') {
+        router.replace('/payment-expired');
         return;
       }
 
-      // エラーハンドリング
       if (statusError) {
         console.error('Status check error:', {
           message: statusError.message,
