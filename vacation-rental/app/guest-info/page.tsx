@@ -31,6 +31,22 @@ export default function GuestInfoPage() {
       const bookingDetails = JSON.parse(localStorage.getItem("bookingDetails") || "{}");
       const amount = JSON.parse(localStorage.getItem("bookingAmount") || "0");
 
+      // 既存の予約をチェック
+      const { data: existingBooking } = await supabaseClient
+        .from('customer_info_data')
+        .select('id')
+        .eq('email', guestInfo.email)
+        .eq('amount', amount)
+        .eq('status', 'pending')
+        .single();
+
+      if (existingBooking) {
+        // 既存の予約がある場合は確認ページへ
+        localStorage.setItem("guestInfo", JSON.stringify(guestInfo));
+        router.push("/confirm");
+        return;
+      }
+
       // 日付を正しく処理（タイムゾーンを考慮）
       const checkInDate = new Date(bookingDetails.checkIn);
       const checkOutDate = new Date(bookingDetails.checkOut);
